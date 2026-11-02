@@ -159,9 +159,13 @@ def _test_addmm_addmv(
             return mat
 
     if mode == "all_sparse":
-        res1 = f(*map(convert_layout, (t, m, v)), alpha=alpha, beta=beta)
+        t_sparse, m_sparse, v_sparse = map(convert_layout, (t, m, v))
+        res1 = f(t_sparse, m_sparse, v_sparse, alpha=alpha, beta=beta)
         test_case.assertEqual(res1.layout, layout)
         res1 = res1.to_dense()
+        # in-place
+        res_inplace = getattr(t_sparse.clone(), f.__name__ + "_")(m_sparse, v_sparse, alpha=alpha, beta=beta)
+        test_case.assertEqual(res_inplace.to_dense(), res1)
     elif mode == "dense_result":
         res1 = f(t, convert_layout(m), convert_layout(v), alpha=alpha, beta=beta)
     else:
@@ -2240,6 +2244,26 @@ class TestSparseCSRDevice(TestCase):
         m2 = torch.randn(50, 25, device=device).to(dtype)
         _test_addmm_addmv(self, torch.addmm, M, m1, m2, beta=0, layout=layout, mode="all_sparse")
 
+        for beta in (0, 1, 2):
+            # Test sp(C) != sp(A @ B), where sp denotes a sparse pattern
+            # Here, m1 is lower-triangular, while m1 @ m2 is not
+            m1 = torch.randn(10, 10, device=device, dtype=dtype).tril()
+            m2 = torch.randn(10, 10, device=device, dtype=dtype)
+            _test_addmm_addmv(self, torch.addmm, m1, m1, m2, beta=beta, layout=layout, mode="all_sparse")
+
+            # Test sp(C) == sp(A @ B), where sp denotes a sparse pattern
+            # Here, m1 is lower-triangular, so is m2, and so is (m1 @ m2)
+            m1 = torch.randn(10, 10, device=device, dtype=dtype).tril()
+            m2 = torch.randn(10, 10, device=device, dtype=dtype).tril()
+            _test_addmm_addmv(self, torch.addmm, m1, m1, m2, beta=beta, layout=layout, mode="all_sparse")
+
+            # Test sp(C) != sp(A @ B), but nnz(C) == nnz(A @ B)
+            m1 = torch.randn(10, 10, device=device, dtype=dtype)
+            m1[:, ::2].zero_()
+            m2 = torch.randn(10, 10, device=device, dtype=dtype)
+            m2[::2, :].zero_()
+            _test_addmm_addmv(self, torch.addmm, m1, m1, m2, beta=beta, layout=layout, mode="all_sparse")
+
         # Test transpose
         for t1, t2, t3, t4 in itertools.product([True, False], repeat=4):
             def maybe_transpose(cond, m):
@@ -2251,6 +2275,50 @@ class TestSparseCSRDevice(TestCase):
             m1 = maybe_transpose(t2, torch.randn(10, 50, device=device).to(dtype))
             m2 = maybe_transpose(t3, torch.randn(50, 25, device=device).to(dtype))
             _test_addmm_addmv(self, torch.addmm, M, m1, m2, transpose_out=t4, layout=layout, mode="all_sparse")
+
+    @parametrize("k", [0, 3, 6])
+    @parametrize("n", [0, 6])
+    @parametrize("m", [0, 6])
+    @parametrize("res_layout", ["CSR", "CSC"])
+    @parametrize("m1_layout", ["CSR", "CSC"])
+    @parametrize("m2_layout", ["CSR", "CSC"])
+    @parametrize("beta", [0, 1, 2])
+    @skipCPUIfNoMklSparse
+    @dtypes(*floating_and_complex_types())
+    @precisionOverride({torch.double: 1e-8, torch.float: 1e-4, torch.bfloat16: 0.6,
+                        torch.half: 1e-1, torch.cfloat: 1e-4, torch.cdouble: 1e-8})
+    @dtypesIfCUDA(*floating_types_and(torch.complex64,
+                                      *[torch.bfloat16] if PLATFORM_SUPPORTS_BF16_ATOMICS else [],
+                                      *[torch.half] if PLATFORM_SUPPORTS_HALF_ATOMICS else [],
+                                      *[torch.complex128]
+                                      if CUSPARSE_SPMM_COMPLEX128_SUPPORTED or HIPSPARSE_SPMM_COMPLEX128_SUPPORTED
+                                      else []))
+    @dtypesIfXPU(*floating_types_and(torch.complex64, torch.bfloat16, torch.half, torch.complex128))
+    def test_addmm_sparse_pattern_combinations(self, device, dtype, beta, res_layout, m1_layout, m2_layout, m, n, k):
+        if res_layout == "CSC" and (m1_layout == "CSR" or m2_layout == "CSR"):
+            self.skipTest(f"Not supported layout combination: {res_layout} + {m1_layout} @ {m2_layout}")
+
+        def to_sparse(t, t_layout):
+            return t.to_sparse_csr() if t_layout == "CSR" else t.to_sparse_csc()
+
+        addmm = functools.partial(torch.addmm, beta=beta)
+        res = torch.randn(m, n, device=device, dtype=dtype)
+        m1 = torch.randn(m, k, device=device, dtype=dtype)
+        m2 = torch.randn(k, n, device=device, dtype=dtype)
+        sp_patterns = [
+            lambda t: t.clone(),
+            lambda t: t.tril(),
+            lambda t: t.triu(),
+            lambda t: t * (torch.rand_like(t).real > 0.7),
+        ]
+        for res_sp, m1_sp, m2_sp in itertools.product(sp_patterns, repeat=3):
+            c = res_sp(res)
+            a = m1_sp(m1)
+            b = m2_sp(m2)
+
+            res_dense = addmm(c, a, b)
+            res_sparse = addmm(to_sparse(c, res_layout), to_sparse(a, m1_layout), to_sparse(b, m2_layout))
+            self.assertEqual(res_dense, res_sparse)
 
     @parametrize("k", [0, 1, 8])
     @parametrize("n", [0, 1, 10])
