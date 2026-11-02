@@ -19,5 +19,8 @@ class MTIADeviceOpOverrides(DeviceOpOverrides):
     def current_stream(self) -> str:
         return "torch.mtia.current_stream()"
 
+    def aten_device_type(self) -> str:
+        return "at::kMTIA"
+
 
 register_device_op_overrides("mtia", MTIADeviceOpOverrides())

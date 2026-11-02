@@ -79,6 +79,25 @@ class TestPythonWrapperCodegen(TestCase):
         wrapper.prefix = IndentedBuffer()
         return wrapper
 
+    @parametrize("device", ["mtia", "mtia:0", "mtia:3"])
+    def test_cpp_codegen_mtia_device_cache(self, device: str) -> None:
+        fx_graph = torch.fx.Graph()
+        fx_graph.output(())
+        graph = GraphLowering(
+            torch.fx.GraphModule(torch.nn.Module(), fx_graph), cpp_wrapper=True
+        )
+        mtia_device = torch.device(device)
+        with V.set_graph_handler(graph):
+            wrapper = CppWrapperCpu()
+            self.assertEqual(
+                wrapper.codegen_device(mtia_device),
+                f"cached_torch_device_type_mtia, {mtia_device.index or 0}",
+            )
+            self.assertEqual(list(wrapper.used_cached_devices), ["mtia"])
+            wrapper.finalize_prefix()
+
+        self.assertIn("CACHE_TORCH_DEVICE(mtia);", wrapper.prefix.getvalue())
+
     def _codegen_output_symbol(self, outputs, keypath):
         wrapper = self._new_cpp_wrapper()
         wrapper.lines = []
