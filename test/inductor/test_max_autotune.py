@@ -415,11 +415,11 @@ class TestMaxAutotune(TestCase):
         # even though G, N, and K each individually fit.
         mat = mock.Mock()
         mat.get_size.return_value = [128, 16384, 5120]
-        mat.get_stride.return_value = [16384 * 5120, 5120, 1]
+        mat.get_stride_hint.return_value = [16384 * 5120, 5120, 1]
         self.assertFalse(_tma_descriptor_max_offset_fits_in_int32(mat))
 
         mat.get_size.return_value = [16, 16384, 5120]
-        mat.get_stride.return_value = [16384 * 5120, 5120, 1]
+        mat.get_stride_hint.return_value = [16384 * 5120, 5120, 1]
         self.assertTrue(_tma_descriptor_max_offset_fits_in_int32(mat))
 
     def test_tma_descriptor_max_offset_fits_in_int32_uses_expected_guarding(self):
@@ -431,7 +431,7 @@ class TestMaxAutotune(TestCase):
         stride0 = sympy.Symbol("st0", integer=True, nonnegative=True)
         mat = mock.Mock()
         mat.get_size.return_value = [size0]
-        mat.get_stride.return_value = [stride0]
+        mat.get_stride_hint.return_value = [stride0]
         condition = sympy.Le((size0 - 1) * stride0, torch.iinfo(torch.int32).max)
 
         with V.set_graph_handler(graph):
