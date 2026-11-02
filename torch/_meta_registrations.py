@@ -9098,8 +9098,9 @@ def meta_scaled_grouped_mm_v2(
     from torch.nn.functional import ScalingType
 
     rowwise = scale_recipe_a == scale_recipe_b == [ScalingType.RowWise.value]
+    mxfp4 = [ScalingType.BlockWise1x32.value]
     fp4 = mat_a.dtype == torch.float4_e2m1fn_x2
-    bf16_only = rowwise or fp4
+    bf16_only = rowwise or (fp4 and scale_recipe_a == scale_recipe_b == mxfp4)
     message = "Grouped scaling configuration requires BFloat16 output"
     if rowwise:
         message = "Rowwise grouped GEMM requires BFloat16 output"
