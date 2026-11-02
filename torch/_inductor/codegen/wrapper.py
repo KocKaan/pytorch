@@ -2418,6 +2418,9 @@ class PythonWrapperCodegen(CodeGen):
         # the generated Python module is loaded with.
         self.user_defined_cutedsl_kernel_cache: dict[tuple[Any, ...], str] = {}
         self.user_defined_cutedsl_launchers: dict[str, Any] = {}
+        # and the C++ wrapper's exports of them (prefix -> header + object), linked
+        # into the model .so or the JIT module (see CppWrapperGpu.cutedsl_link_args).
+        self.cutedsl_exported_kernels: dict[str, Any] = {}
         self.unbacked_symbol_decls: OrderedSet[str] = (
             OrderedSet()
         )  # str of sympy.Symbol
@@ -5221,6 +5224,11 @@ class PythonWrapperCodegen(CodeGen):
         )
         args = ", ".join(arg_str(arg) for arg in runtime_args.values())
         self.writeline(f"{kernel_name}.run({args}, stream={stream_name})")
+
+    def cutedsl_link_args(self) -> list[str]:
+        """Link arguments for the user CuTeDSL kernels the C++ wrapper exported (see
+        CppWrapperGpu); the Python wrapper launches them from Python."""
+        return []
 
     def generate_numel_expr(self, kernel_name: str, tree, suffix: str | None = None):
         sym_name = f"{kernel_name}_{tree.prefix}numel"
