@@ -106,6 +106,7 @@ from ..utils import (
     unpatched_nn_module_getattr,
 )
 from .base import (
+    _compute_slotdefs,
     AsPythonConstantNotImplementedError,
     AttrMutationKind,
     GetSet,
@@ -2294,7 +2295,25 @@ class UserDefinedObjectVariable(UserDefinedVariable):
         args: list[VariableTracker],
         kwargs: dict[str, VariableTracker],
     ) -> VariableTracker:
-        slotdef = self.lookup_slotdefs(name)
+        if name == "__rmod__" and isinstance(self.value, str) and len(args) == 1:
+            # str.__rmod__ is unicode_mod(other, self): `other` is the format
+            # string, and its %s runs a subclass __str__ on self, so keep self.
+            if not issubclass(args[0].python_type(), str):
+                return ConstantVariable.create(NotImplemented)
+            return args[0].call_method(tx, "__mod__", [self], kwargs)
+        for base, to_plain in _to_plain_constant.items():
+            if isinstance(self.value, base):
+                # The base type's method ignores subclass overrides, so run it
+                # on the plain builtin value.
+                plain = ConstantVariable.create(to_plain(self.value))
+                return plain.call_method(tx, name, args, kwargs)
+        # The subclass's own slots (e.g. slot_nb_add for a Python __add__) must
+        # not hide the builtin base's, which is what the unbound call runs.
+        builtin_base = next(
+            t for t in type(self.value).__mro__ if not t.__flags__ & Py_TPFLAGS_HEAPTYPE
+        )
+        base_slotdefs = _compute_slotdefs(builtin_base)
+        slotdef = base_slotdefs.get(name) or self.lookup_slotdefs(name)
         if slotdef is None:
             return super(UserDefinedObjectVariable, self).call_method(  # noqa: UP008
                 tx, name, args, kwargs
@@ -5035,6 +5054,15 @@ class KeyedJaggedTensorVariable(UserDefinedObjectVariable):
 
 
 _CONSTANT_BASE_TYPES = (int, float, str)
+
+Py_TPFLAGS_HEAPTYPE = 1 << 9
+
+# The conversions skip subclass overrides of __int__ / __float__ / __str__
+_to_plain_constant: dict[type, Callable[[Any], Any]] = {
+    int: int.__int__,
+    float: float.__float__,
+    str: str.__str__,
+}
 
 _constant_base_methods: dict[type, set[Any]] = {
     t: {m for m in t.__dict__.values() if callable(m)} for t in _CONSTANT_BASE_TYPES
