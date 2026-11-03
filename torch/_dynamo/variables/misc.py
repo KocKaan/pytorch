@@ -772,18 +772,6 @@ class AutogradFunctionVariable(VariableTracker):
                 pass
         return hash(self.fn_cls), True
 
-    def call_obj_hasattr(
-        self, tx: "InstructionTranslatorBase", name: str
-    ) -> "ConstantVariable":
-        if self.fn_cls_source is None:
-            return super().call_obj_hasattr(tx, name)
-        install_guard(
-            self.fn_cls_source.make_guard(
-                functools.partial(GuardBuilder.HASATTR, attr=name)
-            )
-        )
-        return variables.ConstantVariable.create(hasattr(self.fn_cls, name))
-
     def _resolve_kwargs(
         self,
         args: list[VariableTracker],
@@ -1638,19 +1626,6 @@ class CallMethodVariable(VariableTracker):  # noqa: RVT001
         from .object_protocol import object_richcompare
 
         return object_richcompare(self, tx, other, op)
-
-    def call_obj_hasattr(
-        self, tx: "InstructionTranslatorBase", name: str
-    ) -> "ConstantVariable":
-        if (
-            isinstance(self.obj, AutogradFunctionVariable)
-            and self.method_name == "apply"
-            and getattr(self.obj.fn_cls, "generate_vmap_rule", False)
-        ):
-            return variables.ConstantVariable.create(
-                hasattr(self.obj.fn_cls.apply, name)
-            )
-        return super().call_obj_hasattr(tx, name)
 
     def call_function(
         self,

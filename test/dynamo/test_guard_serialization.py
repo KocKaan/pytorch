@@ -3547,10 +3547,6 @@ class TestGuardSerialization(TestGuardSerializationBase):
 
     def test_hasattr_serialization(self):
         class Module(torch.nn.Module):
-            def __init__(self):
-                super().__init__()
-                self.a = 1
-
             def forward(self, x: torch.Tensor):
                 if hasattr(self, "a"):
                     return x + self.a
@@ -3562,9 +3558,11 @@ class TestGuardSerialization(TestGuardSerializationBase):
         def fn(x):
             return m(x)
 
+        # A True hasattr is guarded by the attribute read itself; only a False
+        # one installs a HASATTR guard.
         ref, loaded = self._test_serialization("HASATTR", fn, torch.randn(3))
         self._test_check_fn(ref, loaded, {"m": m}, True)
-        delattr(m, "a")
+        m.a = 1
         self._test_check_fn(ref, loaded, {"m": m}, False)
 
     def test_type_match(self):
